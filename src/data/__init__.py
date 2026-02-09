@@ -4,3 +4,7 @@ from .preprocess import (
     demojize_text,
     add_variants,
 )
+from .loader import (
+    load_train_dev,
+    load_test,
+)
