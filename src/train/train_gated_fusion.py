@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
-from sklearn.metrics import f1_score, accuracy_score, confusion_matrix, classification_report
+from sklearn.metrics import f1_score, accuracy_score, confusion_matrix
 
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 
@@ -17,7 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.data.loader import load_train_dev, load_test
+from src.data.loader import load_train_dev
 from src.models.gated_fusion import GatedFusionClassifier
 
 
@@ -33,9 +33,9 @@ class SarcasmDataset(Dataset):
     def __getitem__(self, idx: int):
         r = self.df.iloc[idx]
         return {
-            "text": r[self.text_col],
-            "emoji": r[self.emoji_col],
-            "label": int(r["sarcastic"]) if "sarcastic" in r else -1,
+            "text": str(r[self.text_col]),
+            "emoji": str(r[self.emoji_col]),
+            "label": int(r["sarcastic"]),
             "has_emoji": bool(r.get("has_emoji", False)),
             "id": r.get("id", idx),
             "rephrase": r.get("rephrase", None),
@@ -48,24 +48,22 @@ def make_collate(tokenizer, max_len: int):
         emojis = [b["emoji"] for b in batch]
         labels = torch.tensor([b["label"] for b in batch], dtype=torch.long)
         has_emoji = torch.tensor([int(b["has_emoji"]) for b in batch], dtype=torch.long)
-        ids = [b["id"] for b in batch]
-        rephrases = [b["rephrase"] for b in batch]
 
         text_inputs = tokenizer(texts, padding=True, truncation=True, max_length=max_len, return_tensors="pt")
         emoji_inputs = tokenizer(emojis, padding=True, truncation=True, max_length=max_len, return_tensors="pt")
 
-        return text_inputs, emoji_inputs, labels, has_emoji, ids, rephrases
+        return text_inputs, emoji_inputs, labels, has_emoji
 
     return collate
 
 
 @torch.no_grad()
-def predict(model, loader, device) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def predict(model, loader, device) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     model.eval()
     probs, preds, labels = [], [], []
     has_emoji_all = []
 
-    for text_inputs, emoji_inputs, y, has_emoji, _, _ in loader:
+    for text_inputs, emoji_inputs, y, has_emoji in loader:
         text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
         emoji_inputs = {k: v.to(device) for k, v in emoji_inputs.items()}
         y = y.to(device)
@@ -79,7 +77,12 @@ def predict(model, loader, device) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         labels.append(y.cpu().numpy())
         has_emoji_all.append(has_emoji.cpu().numpy())
 
-    return np.concatenate(probs), np.concatenate(preds), np.concatenate(labels), np.concatenate(has_emoji_all)
+    return (
+        np.concatenate(probs),
+        np.concatenate(preds),
+        np.concatenate(labels),
+        np.concatenate(has_emoji_all),
+    )
 
 
 def metrics_from_preds(y_true, y_pred) -> Dict:
@@ -99,12 +102,8 @@ def save_preds_csv(out_dir: Path, df: pd.DataFrame, probs, preds, split_name: st
 
 
 def main():
-    # ====== SETTINGS (edit these only) ======
     pretrained = "roberta-base"
     fusion_mode = "gated"  # gated | text_only | concat | emoji_only
-
-    # Choose which input variant you train on (fixed for your model):
-    # text stream should be x_text (emoji removed)
     text_col = "x_text"
     emoji_col = "x_emoji"
 
@@ -118,7 +117,6 @@ def main():
     out_dir = REPO_ROOT / "results" / run_name
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # ====== SETUP ======
     torch.manual_seed(seed)
     np.random.seed(seed)
 
@@ -141,7 +139,7 @@ def main():
     model.encoder.resize_token_embeddings(len(tokenizer))
     model.to(device)
 
-    # Class-weighted loss (because sarcastic is minority)
+    # class-weighted loss for imbalance
     y = train_df["sarcastic"].astype(int).values
     n0 = int((y == 0).sum())
     n1 = int((y == 1).sum())
@@ -158,12 +156,11 @@ def main():
     best_f1 = -1.0
     best_path = out_dir / "best.pt"
 
-    # ====== TRAIN ======
     for ep in range(1, epochs + 1):
         model.train()
         total_loss = 0.0
 
-        for text_inputs, emoji_inputs, labels, _, _, _ in train_loader:
+        for text_inputs, emoji_inputs, labels, _ in train_loader:
             text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
             emoji_inputs = {k: v.to(device) for k, v in emoji_inputs.items()}
             labels = labels.to(device)
@@ -181,34 +178,26 @@ def main():
         dev_probs, dev_preds, dev_labels, dev_has_emoji = predict(model, dev_loader, device)
         dev_m = metrics_from_preds(dev_labels, dev_preds)
 
-        # emoji-subset dev metrics
         mask = dev_has_emoji == 1
         if mask.any():
             dev_m_emoji = metrics_from_preds(dev_labels[mask], dev_preds[mask])
         else:
             dev_m_emoji = {"macro_f1": None, "accuracy": None, "confusion_matrix": None}
 
-        print(f"Epoch {ep} | train_loss={total_loss/len(train_loader):.4f} "
-              f"| dev_f1={dev_m['macro_f1']:.4f} dev_acc={dev_m['accuracy']:.4f} "
-              f"| dev_emoji_f1={dev_m_emoji['macro_f1']}")
+        print(
+            f"Epoch {ep} | train_loss={total_loss/len(train_loader):.4f} "
+            f"| dev_f1={dev_m['macro_f1']:.4f} dev_acc={dev_m['accuracy']:.4f} "
+            f"| dev_emoji_f1={dev_m_emoji['macro_f1']}"
+        )
 
-        # save best
         if dev_m["macro_f1"] > best_f1:
             best_f1 = dev_m["macro_f1"]
             torch.save(
-                {
-                    "model_state": model.state_dict(),
-                    "pretrained": pretrained,
-                    "fusion_mode": fusion_mode,
-                    "tokenizer_name": pretrained,
-                },
+                {"model_state": model.state_dict(), "pretrained": pretrained, "fusion_mode": fusion_mode},
                 best_path,
             )
-
-            # Save dev predictions for analysis
             save_preds_csv(out_dir, dev_df, dev_probs, dev_preds, split_name="dev")
 
-    # Save run metadata + final dev metrics
     run_info = {
         "run_name": run_name,
         "pretrained": pretrained,
