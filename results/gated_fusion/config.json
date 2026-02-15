@@ -1,0 +1,13 @@
+{
+  "model_type": "gated_fusion",
+  "pretrained_name": "roberta-base",
+  "max_len": 128,
+  "batch_size": 16,
+  "lr": 2e-05,
+  "epochs": 4,
+  "seed": 42,
+  "run_name": "gated_fusion",
+  "weight_decay": 0.01,
+  "warmup_ratio": 0.1,
+  "patience": 2
+}
