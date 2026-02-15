@@ -1,0 +1,13 @@
+{
+  "run_name": "roberta_demojized",
+  "model_name": "roberta-base",
+  "variant": "demojized",
+  "max_len": 128,
+  "lr": 2e-05,
+  "weight_decay": 0.01,
+  "epochs": 4,
+  "batch_size": 16,
+  "warmup_ratio": 0.1,
+  "seed": 42,
+  "patience": 2
+}
