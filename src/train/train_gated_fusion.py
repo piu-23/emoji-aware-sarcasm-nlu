@@ -1,197 +1,219 @@
 from __future__ import annotations
 
-import argparse
-from dataclasses import asdict, dataclass
+import sys
+import json
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Dict, Tuple
 
 import numpy as np
+import pandas as pd
 import torch
-import yaml
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
+from sklearn.metrics import f1_score, accuracy_score, confusion_matrix
+
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 
-from src.experiments.common import load_splits
-from src.experiments.io import ensure_dir, save_json, save_preds_csv
-from src.experiments.metrics import compute_metrics
-from src.transformers.gated_fusion import GatedFusionClassifier
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.data.loader import load_train_dev
+from src.models.gated_fusion import GatedFusionClassifier
 
 
-def set_seed(seed: int) -> None:
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-
-@dataclass
-class Cfg:
-    model_type: str
-    pretrained_name: str
-    max_len: int
-    batch_size: int
-    lr: float
-    epochs: int
-    seed: int
-    run_name: str = "gated_fusion"
-    weight_decay: float = 0.01
-    warmup_ratio: float = 0.1
-    patience: int = 2
-
-
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
-    p.add_argument("--config", required=True)
-    return p.parse_args()
-
-
-def load_cfg(path: str | Path) -> Cfg:
-    with Path(path).open("r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f)
-
-    # YAML sometimes parses scientific notation as strings in Colab.
-    for k in ("max_len", "batch_size", "epochs", "seed", "patience"):
-        if k in raw:
-            raw[k] = int(raw[k])
-    for k in ("lr", "weight_decay", "warmup_ratio"):
-        if k in raw:
-            raw[k] = float(raw[k])
-
-    return Cfg(**raw)
-
-class DualDataset(torch.utils.data.Dataset):
-    def __init__(self, enc_a, enc_b, labels, ids, emoji_present):
-        self.enc_a = enc_a
-        self.enc_b = enc_b
-        self.labels = labels
-        self.ids = ids
-        self.emoji_present = emoji_present
+class SarcasmDataset(Dataset):
+    def __init__(self, df: pd.DataFrame, text_col: str, emoji_col: str):
+        self.df = df.reset_index(drop=True)
+        self.text_col = text_col
+        self.emoji_col = emoji_col
 
     def __len__(self):
-        return len(self.labels)
+        return len(self.df)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
+        r = self.df.iloc[idx]
         return {
-            "a_input_ids": torch.tensor(self.enc_a["input_ids"][idx]),
-            "a_attention_mask": torch.tensor(self.enc_a["attention_mask"][idx]),
-            "b_input_ids": torch.tensor(self.enc_b["input_ids"][idx]),
-            "b_attention_mask": torch.tensor(self.enc_b["attention_mask"][idx]),
-            "labels": torch.tensor(self.labels[idx], dtype=torch.long),
-            "id": torch.tensor(self.ids[idx], dtype=torch.long),
-            "emoji_present": torch.tensor(self.emoji_present[idx], dtype=torch.float),
+            "text": str(r[self.text_col]),
+            "emoji": str(r[self.emoji_col]),
+            "label": int(r["sarcastic"]),
+            "has_emoji": bool(r.get("has_emoji", False)),
+            "id": r.get("id", idx),
+            "rephrase": r.get("rephrase", None),
         }
-def predict(model, loader, device) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[int]]:
+
+
+def make_collate(tokenizer, max_len: int):
+    def collate(batch: List[Dict]):
+        texts = [b["text"] for b in batch]
+        emojis = [b["emoji"] for b in batch]
+        labels = torch.tensor([b["label"] for b in batch], dtype=torch.long)
+        has_emoji = torch.tensor([int(b["has_emoji"]) for b in batch], dtype=torch.long)
+
+        text_inputs = tokenizer(texts, padding=True, truncation=True, max_length=max_len, return_tensors="pt")
+        emoji_inputs = tokenizer(emojis, padding=True, truncation=True, max_length=max_len, return_tensors="pt")
+
+        return text_inputs, emoji_inputs, labels, has_emoji
+
+    return collate
+
+
+@torch.no_grad()
+def predict(model, loader, device) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     model.eval()
-    ys, yp, pr, ids = [], [], [], []
-    for batch in loader:
-        batch_ids = batch.pop("id").cpu().numpy().tolist()
-        y = batch.pop("labels").cpu().numpy()
+    probs, preds, labels = [], [], []
+    has_emoji_all = []
 
-        batch = {k: v.to(device) for k, v in batch.items()}
-        logits = model(**batch).detach().cpu().numpy()
+    for text_inputs, emoji_inputs, y, has_emoji in loader:
+        text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
+        emoji_inputs = {k: v.to(device) for k, v in emoji_inputs.items()}
+        y = y.to(device)
 
-        probs = torch.softmax(torch.tensor(logits), dim=-1).numpy()[:, 1]
-        pred = (probs >= 0.5).astype(int)
+        out = model(text_inputs, emoji_inputs)
+        p = torch.softmax(out.logits, dim=-1)[:, 1]  # P(sarcastic)
+        pr = torch.argmax(out.logits, dim=-1)
 
-        ys.append(y)
-        yp.append(pred)
-        pr.append(probs)
-        ids.extend(batch_ids)
+        probs.append(p.cpu().numpy())
+        preds.append(pr.cpu().numpy())
+        labels.append(y.cpu().numpy())
+        has_emoji_all.append(has_emoji.cpu().numpy())
 
-    return np.concatenate(ys), np.concatenate(yp), np.concatenate(pr), ids
+    return (
+        np.concatenate(probs),
+        np.concatenate(preds),
+        np.concatenate(labels),
+        np.concatenate(has_emoji_all),
+    )
 
 
-def main() -> None:
-    args = parse_args()
-    cfg = load_cfg(args.config)
+def metrics_from_preds(y_true, y_pred) -> Dict:
+    return {
+        "macro_f1": float(f1_score(y_true, y_pred, average="macro")),
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "confusion_matrix": confusion_matrix(y_true, y_pred).tolist(),
+    }
 
-    set_seed(cfg.seed)
+
+def save_preds_csv(out_dir: Path, df: pd.DataFrame, probs, preds, split_name: str):
+    out = df.copy()
+    out["p_sarcastic"] = probs
+    out["pred"] = preds
+    out_path = out_dir / f"preds_{split_name}.csv"
+    out.to_csv(out_path, index=False)
+
+
+def main():
+    pretrained = "roberta-base"
+    fusion_mode = "gated"  # gated | text_only | concat | emoji_only
+    text_col = "x_text"
+    emoji_col = "x_emoji"
+
+    max_len = 128
+    batch_size = 16
+    lr = 2e-5
+    epochs = 4
+    seed = 42
+
+    run_name = f"{fusion_mode}_roberta_lr{lr}_ep{epochs}_bs{batch_size}_seed{seed}"
+    out_dir = REPO_ROOT / "results" / run_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("Device:", device)
 
-    splits = load_splits()  # should default to train.En.processed.csv from your earlier patch
+    train_df, dev_df = load_train_dev()
 
-    df_tr = splits.train
-    df_dv = splits.dev
+    tokenizer = AutoTokenizer.from_pretrained(pretrained)
+    tokenizer.add_special_tokens({"additional_special_tokens": ["<NO_EMOJI>"]})
 
-    x_text_tr = df_tr["text_only"].astype(str).tolist()
-    x_emoji_tr = df_tr["emoji_only"].astype(str).tolist()
-    emoji_present_tr = [1 if s.strip() else 0 for s in x_emoji_tr]
-    y_tr = df_tr["sarcastic"].astype(int).tolist()
-    ids_tr = df_tr.index.astype(int).tolist()
+    train_ds = SarcasmDataset(train_df, text_col=text_col, emoji_col=emoji_col)
+    dev_ds = SarcasmDataset(dev_df, text_col=text_col, emoji_col=emoji_col)
 
-    x_text_dv = df_dv["text_only"].astype(str).tolist()
-    x_emoji_dv = df_dv["emoji_only"].astype(str).tolist()
-    emoji_present_dv = [1 if s.strip() else 0 for s in x_emoji_dv]
-    y_dv = df_dv["sarcastic"].astype(int).tolist()
-    ids_dv = df_dv.index.astype(int).tolist()
+    collate = make_collate(tokenizer, max_len=max_len)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate)
+    dev_loader = DataLoader(dev_ds, batch_size=batch_size, shuffle=False, collate_fn=collate)
 
-    tok = AutoTokenizer.from_pretrained(cfg.pretrained_name, use_fast=True)
-
-    enc_text_tr = tok(x_text_tr, truncation=True, padding=True, max_length=cfg.max_len)
-    enc_emoji_tr = tok(x_emoji_tr, truncation=True, padding=True, max_length=cfg.max_len)
-    enc_text_dv = tok(x_text_dv, truncation=True, padding=True, max_length=cfg.max_len)
-    enc_emoji_dv = tok(x_emoji_dv, truncation=True, padding=True, max_length=cfg.max_len)
-
-    ds_tr = DualDataset(enc_text_tr, enc_emoji_tr, y_tr, ids_tr, emoji_present_tr)
-    ds_dv = DualDataset(enc_text_dv, enc_emoji_dv, y_dv, ids_dv, emoji_present_dv)
-
-    dl_tr = DataLoader(ds_tr, batch_size=cfg.batch_size, shuffle=True)
-    dl_dv = DataLoader(ds_dv, batch_size=cfg.batch_size, shuffle=False)
-
-    model = GatedFusionClassifier(cfg.pretrained_name)
+    model = GatedFusionClassifier(pretrained_name=pretrained, fusion_mode=fusion_mode)
+    model.encoder.resize_token_embeddings(len(tokenizer))
     model.to(device)
 
-    optim = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    # class-weighted loss for imbalance
+    y = train_df["sarcastic"].astype(int).values
+    n0 = int((y == 0).sum())
+    n1 = int((y == 1).sum())
+    w0 = 1.0
+    w1 = n0 / max(n1, 1)
+    class_weights = torch.tensor([w0, w1], dtype=torch.float32).to(device)
+    loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights)
 
-    total_steps = len(dl_tr) * cfg.epochs
-    warmup_steps = int(total_steps * cfg.warmup_ratio)
-    sched = get_linear_schedule_with_warmup(optim, warmup_steps, total_steps)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+    total_steps = epochs * len(train_loader)
+    warmup_steps = int(0.1 * total_steps)
+    scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
 
     best_f1 = -1.0
-    best_state = None
-    bad = 0
+    best_path = out_dir / "best.pt"
 
-    for epoch in range(cfg.epochs):
+    for ep in range(1, epochs + 1):
         model.train()
-        for batch in dl_tr:
-            batch.pop("id")
-            labels = batch.pop("labels").to(device)
-            batch = {k: v.to(device) for k, v in batch.items()}
+        total_loss = 0.0
 
-            logits = model(**batch)
-            loss = torch.nn.functional.cross_entropy(logits, labels)
+        for text_inputs, emoji_inputs, labels, _ in train_loader:
+            text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
+            emoji_inputs = {k: v.to(device) for k, v in emoji_inputs.items()}
+            labels = labels.to(device)
 
-            optim.zero_grad(set_to_none=True)
+            optimizer.zero_grad()
+            out = model(text_inputs, emoji_inputs)
+            loss = loss_fn(out.logits, labels)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optim.step()
-            sched.step()
+            optimizer.step()
+            scheduler.step()
 
-        y_true, y_pred, probs, ids = predict(model, dl_dv, device)
-        m = compute_metrics(y_true, y_pred)
-        print(f"epoch={epoch+1} dev macro_f1={m.macro_f1:.4f} acc={m.accuracy:.4f}")
+            total_loss += float(loss.item())
 
-        if m.macro_f1 > best_f1 + 1e-6:
-            best_f1 = m.macro_f1
-            best_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
-            bad = 0
+        dev_probs, dev_preds, dev_labels, dev_has_emoji = predict(model, dev_loader, device)
+        dev_m = metrics_from_preds(dev_labels, dev_preds)
+
+        mask = dev_has_emoji == 1
+        if mask.any():
+            dev_m_emoji = metrics_from_preds(dev_labels[mask], dev_preds[mask])
         else:
-            bad += 1
-            if bad >= cfg.patience:
-                break
+            dev_m_emoji = {"macro_f1": None, "accuracy": None, "confusion_matrix": None}
 
-    if best_state is not None:
-        model.load_state_dict(best_state)
+        print(
+            f"Epoch {ep} | train_loss={total_loss/len(train_loader):.4f} "
+            f"| dev_f1={dev_m['macro_f1']:.4f} dev_acc={dev_m['accuracy']:.4f} "
+            f"| dev_emoji_f1={dev_m_emoji['macro_f1']}"
+        )
 
-    y_true, y_pred, probs, ids = predict(model, dl_dv, device)
-    m = compute_metrics(y_true, y_pred)
+        if dev_m["macro_f1"] > best_f1:
+            best_f1 = dev_m["macro_f1"]
+            torch.save(
+                {"model_state": model.state_dict(), "pretrained": pretrained, "fusion_mode": fusion_mode},
+                best_path,
+            )
+            save_preds_csv(out_dir, dev_df, dev_probs, dev_preds, split_name="dev")
 
-    out_dir = ensure_dir(Path("results") / cfg.run_name)
-    save_json(out_dir / "metrics.json", {"accuracy": m.accuracy, "macro_f1": m.macro_f1, "per_class": m.per_class})
-    save_json(out_dir / "confusion.json", {"labels": [0, 1], "matrix": m.confusion})
-    save_preds_csv(out_dir / "preds.csv", ids, y_true.tolist(), y_pred.tolist(), probs.tolist())
-    save_json(out_dir / "config.json", asdict(cfg))
-
-    print(f"[{cfg.run_name}] best dev macro_f1={m.macro_f1:.4f}")
+    run_info = {
+        "run_name": run_name,
+        "pretrained": pretrained,
+        "fusion_mode": fusion_mode,
+        "text_col": text_col,
+        "emoji_col": emoji_col,
+        "max_len": max_len,
+        "batch_size": batch_size,
+        "lr": lr,
+        "epochs": epochs,
+        "seed": seed,
+        "best_dev_macro_f1": best_f1,
+        "train_label_counts": {"0": int((y == 0).sum()), "1": int((y == 1).sum())},
+    }
+    (out_dir / "run_config.json").write_text(json.dumps(run_info, indent=2))
+    print("\nSaved run to:", out_dir)
 
 
 if __name__ == "__main__":
