@@ -1,0 +1,7 @@
+{
+  "model": "tfidf+lr",
+  "variant": "demojized",
+  "max_features": 50000,
+  "use_char_ngrams": false,
+  "C": 1.0
+}
