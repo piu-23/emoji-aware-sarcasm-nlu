@@ -3,18 +3,29 @@ import pandas as pd
 
 
 def extract_emojis(text: str) -> str:
+    """
+    Extracts and returns only the emoji characters from a text string.
+    If the input is not a string, returns an empty string.
+    """
     if not isinstance(text, str):
         return ""
     return "".join(ch for ch in text if ch in emoji.EMOJI_DATA)
 
 
 def remove_emojis(text: str) -> str:
+    """
+    Removes all emoji characters from the text.
+    Returns plain text without emojis.
+    """
     if not isinstance(text, str):
         return ""
     return emoji.replace_emoji(text, replace="")
 
 
 def demojize_text(text: str) -> str:
+    """
+    Converts emojis into textual descriptions.
+    """
     if not isinstance(text, str):
         return ""
     return emoji.demojize(text, delimiters=(" ", " "))
@@ -22,13 +33,18 @@ def demojize_text(text: str) -> str:
 
 def add_variants(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Adds:
-      - x_full: original text
-      - x_text: emojis removed
-      - x_desc: emojis converted to text tokens
-      - x_emoji: emoji-only stream (or <NO_EMOJI>)
-      - has_emoji: boolean
-    Handles schema mismatch: train uses 'tweet', test may use 'text'.
+    Adds multiple emoji-aware input representations to the dataframe.
+
+    New columns created:
+      - x_full: original text (with emojis)
+      - x_text: text-only version (emojis removed)
+      - x_desc: emoji converted into text tokens
+      - x_emoji: emoji-only stream (or '<NO_EMOJI>' if none)
+      - has_emoji: boolean flag indicating emoji presence
+
+    Automatically handles dataset schema differences:
+    - Training file uses 'tweet'
+    - Test file may use 'text'
     """
     df = df.copy()
 
@@ -47,3 +63,5 @@ def add_variants(df: pd.DataFrame) -> pd.DataFrame:
     df.loc[~df["has_emoji"], "x_emoji"] = "<NO_EMOJI>"
 
     return df
+
+
