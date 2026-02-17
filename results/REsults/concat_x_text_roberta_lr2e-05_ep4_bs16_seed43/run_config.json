@@ -1,0 +1,17 @@
+{
+  "run_name": "concat_x_text_roberta_lr2e-05_ep4_bs16_seed43",
+  "pretrained": "roberta-base",
+  "fusion_mode": "concat",
+  "text_col": "x_text",
+  "emoji_col": "x_emoji",
+  "max_len": 128,
+  "batch_size": 16,
+  "lr": 2e-05,
+  "epochs": 4,
+  "seed": 43,
+  "best_dev_macro_f1": 0.42872807017543857,
+  "train_label_counts": {
+    "0": 2210,
+    "1": 737
+  }
+}
