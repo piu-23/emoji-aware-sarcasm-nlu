@@ -54,7 +54,7 @@ We compare strong baselines with a proposed **emoji-aware gated fusion model bui
 - Built the training and evaluation pipeline and ensured it runs end-to-end reliably  
 - Ran the main experiments and kept results reproducible and well organized
 - Compared the main model against baseline approaches and model variants (ablations)
-- Collected and summarized performance metrics and key findings for the report/presentation
+- Collected and summarized performance metrics and key findings for the presentation
 - Performed error analysis by inspecting model mistakes and selecting representative examples
 - Supported final deliverables (results tables/figures, slide content, and documentation support) 
 
