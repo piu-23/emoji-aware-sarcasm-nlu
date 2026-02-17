@@ -50,10 +50,13 @@ We compare strong baselines with a proposed **emoji-aware gated fusion model bui
 - Performed training analysis and model comparison  
 
 ## Pranjaly
-- Integrated the training pipeline  
-- Implemented testing scripts  
-- Conducted ablation experiments  
-- Performed detailed error analysis  
+- Implemented the main model architecture for the project
+- Built the training and evaluation pipeline and ensured it runs end-to-end reliably  
+- Ran the main experiments and kept results reproducible and well organized
+- Compared the main model against baseline approaches and model variants (ablations)
+- Collected and summarized performance metrics and key findings for the report/presentation
+- Performed error analysis by inspecting model mistakes and selecting representative examples
+- Supported final deliverables (results tables/figures, slide content, and documentation support) 
 
 ---
 
