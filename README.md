@@ -7,7 +7,8 @@ For example:
 - “Great job 🙂” → genuine praise  
 - “Great job 🙄” → sarcastic criticism  
 
-Our goal is to understand whether explicitly modeling emojis improves sarcasm detection.
+This project investigates whether retaining emoji information in the input improves sarcasm detection compared to text-only representations. 
+We evaluate multiple input variants and compare strong transformer baselines with our proposed gated fusion model.
 
 We treat this as a **binary classification task**:
 
