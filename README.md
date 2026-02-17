@@ -171,7 +171,7 @@ This script:
 ## Step 5 — Testing
 
 ```bash
-python -m src.eval.test_gated_fusion
+python -m src.eval.run_eval (1)
 ```
 
 After training, this:
