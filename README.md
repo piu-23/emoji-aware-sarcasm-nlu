@@ -124,7 +124,7 @@ python data/prepare_splits.py
 
 ---
 
-## Step 2 — Run TF-IDF + Logistic Regression Baselines
+## **Step 2 — Run TF-IDF + Logistic Regression Baselines**
 
 ```bash
 python -m src.baselines.train_tfidf_lr --variant text --run_name lr_text
