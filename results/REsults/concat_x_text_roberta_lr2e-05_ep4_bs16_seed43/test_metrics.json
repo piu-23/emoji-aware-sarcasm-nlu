@@ -1,0 +1,47 @@
+{
+  "run_folder": "concat_x_text_roberta_lr2e-05_ep4_bs16_seed43",
+  "fusion_mode": "concat",
+  "pretrained": "roberta-base",
+  "text_col_used": "x_text",
+  "max_len": 128,
+  "test_macro_f1": 0.46153846153846156,
+  "test_accuracy": 0.8571428571428571,
+  "test_confusion_matrix": [
+    [
+      1200,
+      0
+    ],
+    [
+      200,
+      0
+    ]
+  ],
+  "test_emoji_subset": {
+    "macro_f1": 0.4845890410958904,
+    "accuracy": 0.9401993355481728,
+    "confusion_matrix": [
+      [
+        283,
+        0
+      ],
+      [
+        18,
+        0
+      ]
+    ]
+  },
+  "test_no_emoji_subset": {
+    "macro_f1": 0.4548611111111111,
+    "accuracy": 0.8343949044585988,
+    "confusion_matrix": [
+      [
+        917,
+        0
+      ],
+      [
+        182,
+        0
+      ]
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+RUN: text_only_x_full_roberta_lr2e-05_ep4_bs16_seed43
+FP count: 212
+FN count: 94
+FP emoji rate: 0.278
+FN emoji rate: 0.053
+Files written:
+ - /home/utn/buke84zo/nlu_project/emoji-aware-sarcasm-nlu/results/text_only_x_full_roberta_lr2e-05_ep4_bs16_seed43/analysis/false_positives_top50.csv
+ - /home/utn/buke84zo/nlu_project/emoji-aware-sarcasm-nlu/results/text_only_x_full_roberta_lr2e-05_ep4_bs16_seed43/analysis/false_negatives_top50.csv
+ - /home/utn/buke84zo/nlu_project/emoji-aware-sarcasm-nlu/results/text_only_x_full_roberta_lr2e-05_ep4_bs16_seed43/analysis/fp_with_emoji_top25.csv
+ - /home/utn/buke84zo/nlu_project/emoji-aware-sarcasm-nlu/results/text_only_x_full_roberta_lr2e-05_ep4_bs16_seed43/analysis/fn_with_emoji_top25.csv

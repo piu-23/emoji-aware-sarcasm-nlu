@@ -1,0 +1,9 @@
+FINAL SUMMARY (sorted by test_macro_f1)
+                                       run_folder fusion_mode text_col_used  test_macro_f1  test_accuracy  emoji_subset_f1  no_emoji_subset_f1
+ text_only_x_full_roberta_lr2e-05_ep4_bs16_seed43   text_only        x_full       0.637587       0.781429         0.581944            0.648928
+ text_only_x_text_roberta_lr2e-05_ep4_bs16_seed43   text_only        x_text       0.601610       0.745714         0.578347            0.601384
+     gated_x_text_roberta_lr2e-05_ep4_bs16_seed43       gated        x_text       0.563216       0.695000         0.493968            0.581068
+    concat_x_text_roberta_lr2e-05_ep4_bs16_seed43      concat        x_text       0.461538       0.857143         0.484589            0.454861
+emoji_only_x_text_roberta_lr2e-05_ep4_bs16_seed43  emoji_only        x_text       0.434797       0.667857         0.056426            0.454861
+
+No warnings.
