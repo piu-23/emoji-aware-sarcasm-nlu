@@ -21,12 +21,20 @@ We compare strong baselines with a proposed **emoji-aware gated fusion model bui
 # Team Responsibilities
 
 ## Riya
-- Designed and implemented the complete data pipeline  
-- Built preprocessing and created input variants:
-  - text-only  
-  - full (text + emoji)  
-  - demojized (emoji → text)  
-  - emoji-only  
+- Designed and implemented the complete data pipeline
+- Built emoji-aware preprocessing module
+  - text-only (emojis removed)
+  - full (text + emoji)
+  - demojized (emoji → text tokens)
+  - emoji-only stream
+- Implemented balanced train / validation split
+- Ensured reproducibility using fixed random seed
+- Saved split indices in splits.json
+- Generated dataset statistics (class balance, emoji usage)
+- Built reusable data loaders for training and evaluation
+- Ensured official test set remains untouched
+- Structured data module for seamless integration with models
+
 
 ## Aswathy
 - Trained all models:
@@ -106,18 +114,12 @@ Main libraries used:
 
 # How to Run the Project
 
-## Step 1 — Run Data Pipeline
+## Step 1 — Generate Train / Validation Splits
+
+Before training any models, generate the reproducible train/dev split:
 
 ```bash
-python -m src.data.preprocess
-```
-
-This creates the required input variants:
-
-- `x_text`
-- `x_full`
-- `x_demojized`
-- `x_emoji`
+python data/prepare_splits.py
 
 ---
 
